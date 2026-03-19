@@ -11,7 +11,8 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import http from "http";
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -705,12 +706,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 /**
- * Start the server using stdio transport.
+ * Start the server using HTTP/SSE transport.
  */
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('ERPNext MCP server running on stdio');
+  const transports = new Map<string, SSEServerTransport>();
+
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url!, `http://localhost`);
+
+    if (req.method === "GET" && url.pathname === "/sse") {
+      const transport = new SSEServerTransport("/messages", res);
+      transports.set(transport.sessionId, transport);
+      res.on("close", () => transports.delete(transport.sessionId));
+      await server.connect(transport);
+
+    } else if (req.method === "POST" && url.pathname === "/messages") {
+      const sessionId = url.searchParams.get("sessionId")!;
+      const transport = transports.get(sessionId);
+      if (transport) {
+        await transport.handlePostMessage(req, res);
+      } else {
+        res.writeHead(404).end("Unknown session");
+      }
+
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+
+  const port = Number(process.env.PORT ?? 3000);
+  httpServer.listen(port, () => {
+    console.error(`ERPNext MCP server listening on http://0.0.0.0:${port}/sse`);
+  });
 }
 
 main().catch((error) => {
