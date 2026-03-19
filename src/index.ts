@@ -71,6 +71,7 @@ class ERPNextClient {
   async getDocument(doctype: string, name: string): Promise<any> {
     try {
       const response = await this.axiosInstance.get(`/api/resource/${doctype}/${name}`);
+      console.log(response)
       return response.data.data;
     } catch (error: any) {
       throw new Error(`Failed to get ${doctype} ${name}: ${error?.message || 'Unknown error'}`);
@@ -444,6 +445,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  * Handler for tool calls.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  // Some agent frameworks wrap arguments in a `kwargs` object — unwrap if present
+  const args = (request.params.arguments as any)?.kwargs ?? request.params.arguments ?? {};
+
   switch (request.params.name) {
     case "get_documents": {
       if (!erpnext.isAuthenticated()) {
@@ -456,10 +460,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       
-      const doctype = String(request.params.arguments?.doctype);
-      const fields = request.params.arguments?.fields as string[] | undefined;
-      const filters = request.params.arguments?.filters as Record<string, any> | undefined;
-      const limit = request.params.arguments?.limit as number | undefined;
+      const doctype = String(args?.doctype);
+      const fields = args?.fields as string[] | undefined;
+      const filters = args?.filters as Record<string, any> | undefined;
+      const limit = args?.limit as number | undefined;
       
       if (!doctype) {
         throw new McpError(
@@ -498,8 +502,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       
-      const doctype = String(request.params.arguments?.doctype);
-      const data = request.params.arguments?.data as Record<string, any> | undefined;
+      const doctype = String(args?.doctype);
+      const data = args?.data as Record<string, any> | undefined;
       
       if (!doctype || !data) {
         throw new McpError(
@@ -538,9 +542,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       
-      const doctype = String(request.params.arguments?.doctype);
-      const name = String(request.params.arguments?.name);
-      const data = request.params.arguments?.data as Record<string, any> | undefined;
+      const doctype = String(args?.doctype);
+      const name = String(args?.name);
+      const data = args?.data as Record<string, any> | undefined;
       
       if (!doctype || !name || !data) {
         throw new McpError(
@@ -579,8 +583,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       
-      const reportName = String(request.params.arguments?.report_name);
-      const filters = request.params.arguments?.filters as Record<string, any> | undefined;
+      const reportName = String(args?.report_name);
+      const filters = args?.filters as Record<string, any> | undefined;
       
       if (!reportName) {
         throw new McpError(
@@ -619,7 +623,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       
-      const doctype = String(request.params.arguments?.doctype);
+      const doctype = String(args?.doctype);
       
       if (!doctype) {
         throw new McpError(
@@ -717,7 +721,16 @@ async function main() {
     if (req.method === "GET" && url.pathname === "/sse") {
       const transport = new SSEServerTransport("/messages", res);
       transports.set(transport.sessionId, transport);
-      res.on("close", () => transports.delete(transport.sessionId));
+
+      const keepalive = setInterval(() => {
+        if (!res.writableEnded) res.write(": keepalive\n\n");
+      }, 15000);
+
+      res.on("close", () => {
+        clearInterval(keepalive);
+        transports.delete(transport.sessionId);
+      });
+
       await server.connect(transport);
 
     } else if (req.method === "POST" && url.pathname === "/messages") {
